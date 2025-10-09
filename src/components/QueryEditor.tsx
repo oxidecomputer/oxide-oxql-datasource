@@ -1,5 +1,5 @@
 import React from 'react';
-import { InlineField, Stack, CodeEditor, monacoTypes } from '@grafana/ui';
+import { InlineField, Stack, CodeEditor, monacoTypes, Input } from '@grafana/ui';
 import { QueryEditorProps } from '@grafana/data';
 import { DataSource } from '../datasource';
 import { OxqlOptions, OxqlQuery } from '../types';
@@ -9,6 +9,10 @@ type Props = QueryEditorProps<DataSource, OxqlQuery, OxqlOptions>;
 export function QueryEditor({ datasource, query, onChange, onRunQuery }: Props) {
   const onQueryChange = (value: string) => {
     onChange({ ...query, queryText: value });
+  };
+
+  const onLegendFormatChange = (event: React.FormEvent<HTMLInputElement>) => {
+    onChange({ ...query, legendFormat: event.currentTarget.value });
   };
 
   const listMetrics = async () => {
@@ -67,7 +71,7 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery }: Props) 
     });
   };
 
-  const { queryText } = query;
+  const { queryText, legendFormat } = query;
 
   return (
     <Stack gap={0}>
@@ -83,6 +87,13 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery }: Props) 
             showMiniMap={false}
           />
         </div>
+      </InlineField>
+      <InlineField
+        label="Legend"
+        labelWidth={16}
+        tooltip="Optional legend format. Values in {{ braces }} will be templated from result labels."
+      >
+        <Input value={legendFormat || ''} onChange={onLegendFormatChange} width={40} />
       </InlineField>
     </Stack>
   );

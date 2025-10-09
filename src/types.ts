@@ -4,6 +4,7 @@ import { DataQuery } from '@grafana/schema';
 export interface OxqlQuery extends DataQuery {
   queryText?: string;
   constant: number;
+  legendFormat?: string;
 }
 
 export const DEFAULT_QUERY: Partial<OxqlQuery> = {
