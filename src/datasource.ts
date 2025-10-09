@@ -9,7 +9,6 @@ import {
   createDataFrame,
   FieldType,
   MetricFindValue,
-  // MetricFindValue,
 } from '@grafana/data';
 
 import { OxqlQuery, OxqlOptions, DEFAULT_QUERY, DataSourceResponse } from './types';
@@ -72,12 +71,24 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
         let query = target.queryText;
         query = `${query} | filter timestamp > @${from} && timestamp < @${to}`;
         query = getTemplateSrv().replace(query, options.scopedVars);
+        const legendFormat = target.legendFormat;
 
         const response = await this.request(QUERY_URL, 'POST', '', { query: query });
         const raw: any = response.data;
 
         return raw.tables.map((table: any) => {
           return table.timeseries.map((series: any) => {
+            let labels = Object.keys(series.fields).reduce(
+              (result, key) => {
+                result[key] = series.fields[key].value;
+                return result;
+              },
+              {} as Record<string, string>
+            );
+            if (legendFormat) {
+              const legend = renderLegend(legendFormat, labels);
+              labels = { legend: legend };
+            }
             return createDataFrame({
               refId: target.refId,
               fields: [
@@ -85,13 +96,7 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
                 {
                   name: 'Value',
                   values: series.points.values[0].values.values.slice(1),
-                  labels: Object.keys(series.fields).reduce(
-                    (result, key) => {
-                      result[key] = series.fields[key].value;
-                      return result;
-                    },
-                    {} as Record<string, string>
-                  ),
+                  labels: labels,
                 },
               ],
             });
@@ -147,4 +152,13 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
       };
     }
   }
+}
+
+/**
+ * Render legendFormat templates with provided variables.
+ */
+function renderLegend(template: string, vars: Record<string, string>): string {
+  return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) => {
+    return vars[key] || match;
+  });
 }
