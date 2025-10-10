@@ -15,9 +15,13 @@ import { OxqlQuery, OxqlOptions, DEFAULT_QUERY, DataSourceResponse } from './typ
 import { lastValueFrom } from 'rxjs';
 
 const QUERY_URL = '/v1/system/timeseries/query';
+const SILO_URL = '/v1/system/silos';
+const PROJECT_URL = '/v1/projects';
 
 export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
   baseUrl: string;
+  projects: Record<string, string> = {};
+  silos: Record<string, string> = {};
 
   constructor(instanceSettings: DataSourceInstanceSettings<OxqlOptions>) {
     super(instanceSettings);
@@ -66,6 +70,28 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
     const from = range!.from.toISOString().slice(0, -1);
     const to = range!.to.toISOString().slice(0, -1);
 
+    // Cache mappings from resource UUIDs to human-readable names. Note: we can
+    // add mappings for higher-cardinality resources like instances and disks,
+    // but this would add more latency to the 0th query on the page.
+    //
+    // TODO: add human-readable labels to metrics in oximeter so that we don't
+    // have to enrich them here.  Tracked in
+    // https://github.com/oxidecomputer/omicron/issues/9119.
+    if (!Object.keys(this.silos).length) {
+      const silos = await this.paginate(SILO_URL);
+      this.silos = silos.reduce((result, silo) => {
+        result[silo.id] = silo.name;
+        return result;
+      }, {});
+    }
+    if (!Object.keys(this.projects).length) {
+      const projects = await this.paginate(PROJECT_URL);
+      this.projects = projects.reduce((result, project) => {
+        result[project.id] = project.name;
+        return result;
+      }, {});
+    }
+
     const frames = await Promise.all(
       options.targets.map(async (target) => {
         let query = target.queryText;
@@ -85,10 +111,21 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
               },
               {} as Record<string, string>
             );
+
+            // Enrich with labels from Oxide API.
+            if (labels.silo_id && this.silos[labels.silo_id]) {
+              labels.silo_name = this.silos[labels.silo_id];
+            }
+            if (labels.project_id && this.projects[labels.project_id]) {
+              labels.project_name = this.projects[labels.project_id];
+            }
+
+            // Optionally render custom legend.
             if (legendFormat) {
               const legend = renderLegend(legendFormat, labels);
               labels = { legend: legend };
             }
+
             return createDataFrame({
               refId: target.refId,
               fields: [
@@ -115,6 +152,24 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
       data: data,
     });
     return lastValueFrom(response);
+  }
+
+  async paginate(url: string, params?: Record<string, string>) {
+    params = params || {};
+    const items: any[] = [];
+    while (true) {
+      const response = await this.request(url, 'GET', new URLSearchParams(params).toString());
+      const raw: any = response.data;
+      raw.items.forEach((item: any) => {
+        items.push(item);
+      });
+      if (raw.next_page) {
+        params.page_token = raw.next_page;
+      } else {
+        break;
+      }
+    }
+    return items;
   }
 
   /**
