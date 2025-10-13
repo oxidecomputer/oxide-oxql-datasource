@@ -36,33 +36,97 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
     return !!query.queryText;
   }
 
+  /**
+   * metricFindQuery is used by Grafana to identify the set of potential values
+   * for a template variable, based on the user's query. This implementation
+   * allows users to define variable values based on an OxQL query using the
+   * `label_values(metric_name, id, [label])` function. We query OxQL for the
+   * given metric name, then use the labels defined by `id` and `label` as the
+   * values and labels for the template variable.
+   */
   async metricFindQuery(query: string): Promise<MetricFindValue[]> {
-    const labelSet: Set<string | number> = new Set();
+    const labels: Record<string, string> = {};
 
-    const pattern = /label_values\((?<metric>[\w:]+), (?<label>\w+)\)/;
+    // Match `label_values(metric, id_label)` or `label_values(metric,
+    // id_label, label_label)`.
+    //
+    // TODO: implement a custom UI with `CustomVariableSupport` and drop this
+    // DSL.
+    const pattern = /label_values\((?<metric>[\w:]+),\s*(?<value>\w+)(,\s(?<label>\w+))?\)/;
     const match = query.match(pattern);
 
     if (match && match.groups) {
       const groups = match.groups;
+      groups.label = groups.label || groups.value;
       const oxqlQuery = `get ${groups.metric} | filter timestamp > @now() - 5m | last 1`;
       const response = await this.request(QUERY_URL, 'POST', '', { query: oxqlQuery });
       const raw: any = response.data;
 
+      // Fetch additional metadata from Oxide API if requested.
+      let silos: Record<string, string> = {};
+      if (groups.label === 'silo_name' || groups.value === 'silo_name') {
+        silos = await this.getSilos();
+      }
+      let projects: Record<string, string> = {};
+      if (groups.label === 'project_name' || groups.value === 'project_name') {
+        projects = await this.getProjects();
+      }
+
       raw.tables.forEach((table: any) => {
         table.timeseries.forEach((series: any) => {
-          labelSet.add(series.fields[groups.label].value);
+          // Enrich series with additional metadata if requested.
+          if (groups.label === 'silo_name' || groups.value === 'silo_name') {
+            if ('silo_id' in series.fields && silos[series.fields['silo_id'].value]) {
+              series.fields['silo_name'] = { value: silos[series.fields['silo_id'].value] };
+            }
+          }
+          if (groups.label === 'project_name' || groups.value === 'project_name') {
+            if ('project_id' in series.fields && projects[series.fields['project_id'].value]) {
+              series.fields['project_name'] = { value: projects[series.fields['project_id'].value] };
+            }
+          }
+
+          if (groups.value in series.fields && groups.label in series.fields) {
+            const key = series.fields[groups.value].value;
+            const value = series.fields[groups.label].value;
+            labels[key] = value;
+          }
         });
       });
     }
 
-    const labels = Array.from(labelSet);
-    labels.sort((a: any, b: any) => a - b);
-    return labels.map((label) => {
+    const findValues: any = Object.keys(labels).map((key) => {
       return {
-        text: label.toString(),
-        value: label,
+        text: labels[key],
+        value: key,
       };
     });
+    findValues.sort((a: any, b: any) => a.value - b.value);
+    return findValues;
+  }
+
+  async getSilos(): Promise<Record<string, string>> {
+    if (!Object.keys(this.silos).length) {
+      const silos = await this.paginate(SILO_URL);
+      this.silos = Object.fromEntries(
+        silos.map((silo) => {
+          return [silo.id, silo.name];
+        })
+      );
+    }
+    return this.silos;
+  }
+
+  async getProjects(): Promise<Record<string, string>> {
+    if (!Object.keys(this.projects).length) {
+      const projects = await this.paginate(PROJECT_URL);
+      this.projects = Object.fromEntries(
+        projects.map((project) => {
+          return [project.id, project.name];
+        })
+      );
+    }
+    return this.projects;
   }
 
   async query(options: DataQueryRequest<OxqlQuery>): Promise<DataQueryResponse> {
@@ -77,20 +141,8 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
     // TODO: add human-readable labels to metrics in oximeter so that we don't
     // have to enrich them here.  Tracked in
     // https://github.com/oxidecomputer/omicron/issues/9119.
-    if (!Object.keys(this.silos).length) {
-      const silos = await this.paginate(SILO_URL);
-      this.silos = silos.reduce((result, silo) => {
-        result[silo.id] = silo.name;
-        return result;
-      }, {});
-    }
-    if (!Object.keys(this.projects).length) {
-      const projects = await this.paginate(PROJECT_URL);
-      this.projects = projects.reduce((result, project) => {
-        result[project.id] = project.name;
-        return result;
-      }, {});
-    }
+    const silos = await this.getSilos();
+    const projects = await this.getProjects();
 
     const frames = await Promise.all(
       options.targets.map(async (target) => {
@@ -113,11 +165,11 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
             );
 
             // Enrich with labels from Oxide API.
-            if (labels.silo_id && this.silos[labels.silo_id]) {
-              labels.silo_name = this.silos[labels.silo_id];
+            if (labels.silo_id && silos[labels.silo_id]) {
+              labels.silo_name = silos[labels.silo_id];
             }
-            if (labels.project_id && this.projects[labels.project_id]) {
-              labels.project_name = this.projects[labels.project_id];
+            if (labels.project_id && projects[labels.project_id]) {
+              labels.project_name = projects[labels.project_id];
             }
 
             // Optionally render custom legend.
