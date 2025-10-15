@@ -36,9 +36,60 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery }: Props) 
   const handleEditorMount = async (editor: monacoTypes.editor.IStandaloneCodeEditor, monaco: typeof monacoTypes) => {
     const metrics = await listMetrics();
 
-    monaco.languages.registerCompletionItemProvider('plaintext', {
+    // Define a simple Monaco language for OxQL.
+    monaco.languages.register({ id: 'oxql' });
+
+    monaco.languages.setLanguageConfiguration('oxql', {
+      wordPattern: /[a-zA-Z0-9_:]+/,
+
+      brackets: [['[', ']']],
+      autoClosingPairs: [
+        { open: '[', close: ']' },
+        { open: '"', close: '"' },
+        { open: "'", close: "'" },
+      ],
+      surroundingPairs: [
+        { open: '[', close: ']' },
+        { open: '"', close: '"' },
+        { open: "'", close: "'" },
+      ],
+    });
+
+    monaco.languages.setMonarchTokensProvider('oxql', {
+      keywords: ['get', 'align', 'filter', 'group_by', 'first', 'last'],
+
+      operators: ['&&', '||', '^', '^', '!', '==', '!=', '>', '>=', '<', '<=', '~='],
+
+      symbols: /[=><!~?:&|+\-*\/\^%]+/,
+
+      tokenizer: {
+        root: [
+          [
+            /[a-zA-Z0-9_:]+/,
+            {
+              cases: {
+                '@keywords': 'keyword',
+                '@default': 'identifier',
+              },
+            },
+          ],
+          [
+            /@symbols/,
+            {
+              cases: {
+                '@operators': 'operator',
+                '@default': '',
+              },
+            },
+          ],
+        ],
+      },
+    });
+
+    monaco.languages.registerCompletionItemProvider('oxql', {
       provideCompletionItems: (model: any, position: any) => {
         const word = model.getWordUntilPosition(position);
+        const prevWord = model.getWordUntilPosition(new monaco.Position(position.lineNumber, word.startColumn - 1));
         const range = {
           startLineNumber: position.lineNumber,
           endLineNumber: position.lineNumber,
@@ -46,16 +97,22 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery }: Props) 
           endColumn: word.endColumn,
         };
 
-        return {
-          suggestions: metrics.map((metric) => ({
+        // Show available metric names, but only following a "get" token.
+        //
+        // TODO: implement a more complete OxQL parser, handling keywords,
+        // subqueries, filtering facets, etc.
+        let suggestions: monacoTypes.languages.CompletionItem[] = [];
+        if (prevWord && prevWord.word.toLowerCase() === 'get') {
+          suggestions = metrics.map((metric) => ({
             label: metric,
             kind: monaco.languages.CompletionItemKind.Field,
             insertText: metric,
             detail: `Metric: ${metric}`,
             documentation: `Insert ${metric} metric`,
             range: range,
-          })),
-        };
+          }));
+        }
+        return { suggestions: suggestions };
       },
     });
 
@@ -79,7 +136,7 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery }: Props) 
         <div style={{ width: '300px' }}>
           <CodeEditor
             value={queryText || ''}
-            language="plaintext"
+            language="oxql"
             height="100px"
             onChange={onQueryChange}
             onEditorDidMount={handleEditorMount}
