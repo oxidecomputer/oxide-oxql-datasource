@@ -156,12 +156,13 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
 
         return raw.tables.map((table: any) => {
           return table.timeseries.map((series: any) => {
-            let labels = Object.keys(series.fields).reduce(
-              (result, key) => {
-                result[key] = series.fields[key].value;
-                return result;
-              },
-              {} as Record<string, string>
+            let labels: Record<string, string> = Object.fromEntries(
+              Object.entries(series.fields).map((pair: any) => {
+                const [key, value] = pair;
+                // Cast values to string to ensure falsy values are rendered
+                // properly.
+                return [key, String(value.value).toString()];
+              })
             );
 
             // Enrich with labels from Oxide API.
