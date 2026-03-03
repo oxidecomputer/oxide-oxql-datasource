@@ -35,9 +35,13 @@ export const mapObj =
     vf: (k: string | undefined, v: unknown) => unknown = (_, v) => v,
   ) =>
   (o: unknown): unknown => {
-    if (!isObjectOrArray(o)) return o;
+    if (!isObjectOrArray(o)) {
+      return o;
+    }
 
-    if (Array.isArray(o)) return o.map(mapObj(kf, vf));
+    if (Array.isArray(o)) {
+      return o.map(mapObj(kf, vf));
+    }
 
     const newObj: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(o as Record<string, unknown>)) {
@@ -58,7 +62,9 @@ export const parseIfDate = (k: string | undefined, v: unknown) => {
       k === 'timestamp')
   ) {
     const d = new Date(v);
-    if (isNaN(d.getTime())) return v;
+    if (isNaN(d.getTime())) {
+      return v;
+    }
     return d;
   }
   return v;

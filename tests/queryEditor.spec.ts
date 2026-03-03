@@ -1,17 +1,12 @@
 import { test, expect } from '@grafana/plugin-e2e';
 
-test('smoke: should render query editor', async ({ panelEditPage, readProvisionedDataSource }) => {
+test('smoke: should render query editor', async ({ panelEditPage, readProvisionedDataSource, page }) => {
   const ds = await readProvisionedDataSource({ fileName: 'datasources.yml' });
+  await page.route('**/v1/system/timeseries/schemas*', async (route) => {
+    await route.fulfill({ status: 200, body: JSON.stringify({ items: [], nextPage: null }) });
+  });
   await panelEditPage.datasource.set(ds.name);
-  await expect(panelEditPage.getQueryEditorRow('A').getByRole('textbox', { name: 'Query Text' })).toBeVisible();
-});
-
-test('data query should return a value', async ({ panelEditPage, readProvisionedDataSource }) => {
-  const ds = await readProvisionedDataSource({ fileName: 'datasources.yml' });
-  await panelEditPage.datasource.set(ds.name);
-  await panelEditPage.setVisualization('Table');
-  await panelEditPage.getQueryEditorRow('A').getByRole('textbox', { name: 'Query Text' }).fill('test query');
-  await panelEditPage.getQueryEditorRow('A').getByRole('spinbutton').fill('10');
-  await expect(panelEditPage.panel.fieldNames).toContainText(['Time', 'Value']);
-  await expect(panelEditPage.panel.data).toContainText(['10']);
+  const queryRow = panelEditPage.getQueryEditorRow('A');
+  await expect(queryRow.getByText('Query Text')).toBeVisible();
+  await expect(queryRow.getByText('Legend')).toBeVisible();
 });

@@ -7,7 +7,7 @@
     "test": "jest --watch --onlyChanged",
     "test:ci": "jest --passWithNoTests --maxWorkers 4",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint --cache --ignore-path ./.gitignore --ext .js,.jsx,.ts,.tsx .",
+    "lint": "eslint --cache .",
     "lint:fix": "npm run lint -- --fix && prettier --write --list-different .",
     "e2e": "playwright test",
     "server": "docker compose up --build",
@@ -16,7 +16,7 @@
   "author": "Oxide",
   "license": "Apache-2.0",
   "devDependencies": {
-    "@grafana/eslint-config": "^8.2.0",
+    "@grafana/eslint-config": "^9.0.0",
     "@grafana/plugin-e2e": "^2.1.12",
     "@grafana/tsconfig": "^2.0.0",
     "@playwright/test": "^1.56.1",
