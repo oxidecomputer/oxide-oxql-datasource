@@ -11,7 +11,8 @@ import {
   MetricFindValue,
 } from '@grafana/data';
 
-import { OxqlQuery, OxqlOptions, DEFAULT_QUERY, DataSourceResponse } from './types';
+import type { OxqlQueryResult, Silo, Project, TimeseriesQuery } from '@oxide/api';
+import { OxqlQuery, OxqlOptions, DEFAULT_QUERY, processResponseBody, snakeToCamel } from './types';
 import { lastValueFrom } from 'rxjs';
 
 const QUERY_URL = '/v1/system/timeseries/query';
@@ -58,56 +59,56 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
     if (match && match.groups) {
       const groups = match.groups;
       groups.label = groups.label || groups.value;
-      const oxqlQuery = `get ${groups.metric} | filter timestamp > @now() - 5m | last 1`;
-      const response = await this.request(QUERY_URL, 'POST', '', { query: oxqlQuery });
-      const raw: any = response.data;
+      // Convert user-provided field names from snake_case to camelCase to
+      // match the converted API response keys.
+      const valueField = snakeToCamel(groups.value);
+      const labelField = snakeToCamel(groups.label);
+      const body: TimeseriesQuery = { query: `get ${groups.metric} | filter timestamp > @now() - 5m | last 1` };
+      const response = await this.request<OxqlQueryResult>(QUERY_URL, 'POST', '', body);
 
       // Fetch additional metadata from Oxide API if requested.
       let silos: Record<string, string> = {};
-      if (groups.label === 'silo_name' || groups.value === 'silo_name') {
+      if (labelField === 'siloName' || valueField === 'siloName') {
         silos = await this.getSilos();
       }
       let projects: Record<string, string> = {};
-      if (groups.label === 'project_name' || groups.value === 'project_name') {
+      if (labelField === 'projectName' || valueField === 'projectName') {
         projects = await this.getProjects();
       }
 
-      raw.tables.forEach((table: any) => {
-        table.timeseries.forEach((series: any) => {
+      response.data.tables.forEach((table) => {
+        table.timeseries.forEach((series) => {
+          const fields = series.fields as Record<string, { value: string | number | boolean }>;
           // Enrich series with additional metadata if requested.
-          if (groups.label === 'silo_name' || groups.value === 'silo_name') {
-            if ('silo_id' in series.fields && silos[series.fields['silo_id'].value]) {
-              series.fields['silo_name'] = { value: silos[series.fields['silo_id'].value] };
+          if (labelField === 'siloName' || valueField === 'siloName') {
+            if ('siloId' in fields && silos[fields['siloId'].value as string]) {
+              fields['siloName'] = { value: silos[fields['siloId'].value as string] };
             }
           }
-          if (groups.label === 'project_name' || groups.value === 'project_name') {
-            if ('project_id' in series.fields && projects[series.fields['project_id'].value]) {
-              series.fields['project_name'] = { value: projects[series.fields['project_id'].value] };
+          if (labelField === 'projectName' || valueField === 'projectName') {
+            if ('projectId' in fields && projects[fields['projectId'].value as string]) {
+              fields['projectName'] = { value: projects[fields['projectId'].value as string] };
             }
           }
 
-          if (groups.value in series.fields && groups.label in series.fields) {
-            const key = series.fields[groups.value].value;
-            const value = series.fields[groups.label].value;
-            labels[key] = value;
+          if (valueField in fields && labelField in fields) {
+            labels[fields[valueField].value as string] = fields[labelField].value as string;
           }
         });
       });
     }
 
-    const findValues: any = Object.keys(labels).map((key) => {
-      return {
-        text: labels[key],
-        value: key,
-      };
-    });
-    findValues.sort((a: any, b: any) => a.value - b.value);
+    const findValues: MetricFindValue[] = Object.keys(labels).map((key) => ({
+      text: labels[key],
+      value: key,
+    }));
+    findValues.sort((a, b) => String(a.value ?? '').localeCompare(String(b.value ?? '')));
     return findValues;
   }
 
   async getSilos(): Promise<Record<string, string>> {
     if (!Object.keys(this.silos).length) {
-      const silos = await this.paginate(SILO_URL);
+      const silos = await this.paginate<Silo>(SILO_URL);
       this.silos = Object.fromEntries(
         silos.map((silo) => {
           return [silo.id, silo.name];
@@ -119,7 +120,7 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
 
   async getProjects(): Promise<Record<string, string>> {
     if (!Object.keys(this.projects).length) {
-      const projects = await this.paginate(PROJECT_URL);
+      const projects = await this.paginate<Project>(PROJECT_URL);
       this.projects = Object.fromEntries(
         projects.map((project) => {
           return [project.id, project.name];
@@ -151,26 +152,25 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
         query = getTemplateSrv().replace(query, options.scopedVars);
         const legendFormat = target.legendFormat;
 
-        const response = await this.request(QUERY_URL, 'POST', '', { query: query });
-        const raw: any = response.data;
+        const body: TimeseriesQuery = { query: query };
+        const response = await this.request<OxqlQueryResult>(QUERY_URL, 'POST', '', body);
 
-        return raw.tables.map((table: any) => {
-          return table.timeseries.map((series: any) => {
+        return response.data.tables.map((table) => {
+          return table.timeseries.map((series) => {
             let labels: Record<string, string> = Object.fromEntries(
-              Object.entries(series.fields).map((pair: any) => {
-                const [key, value] = pair;
+              Object.entries(series.fields).map(([key, value]) => {
                 // Cast values to string to ensure falsy values are rendered
                 // properly.
-                return [key, String(value.value).toString()];
+                return [key, String(value.value)];
               })
             );
 
             // Enrich with labels from Oxide API.
-            if (labels.silo_id && silos[labels.silo_id]) {
-              labels.silo_name = silos[labels.silo_id];
+            if (labels.siloId && silos[labels.siloId]) {
+              labels.siloName = silos[labels.siloId];
             }
-            if (labels.project_id && projects[labels.project_id]) {
-              labels.project_name = projects[labels.project_id];
+            if (labels.projectId && projects[labels.projectId]) {
+              labels.projectName = projects[labels.projectId];
             }
 
             // Optionally render custom legend.
@@ -198,26 +198,49 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
     return { data: _.flattenDeep(frames) };
   }
 
-  async request(url: string, method = 'GET', params?: string, data?: object) {
-    const response = getBackendSrv().fetch<DataSourceResponse>({
-      method: method,
-      url: `${this.baseUrl}${url}${params?.length ? `?${params}` : ''}`,
-      data: data,
-    });
-    return lastValueFrom(response);
+  /**
+   * Make a request to the Oxide API using the Grafana backend proxy.
+   *
+   * The Grafana backend proxy handles requests to the Oxide API, using the
+   * configured host and API key. Because we don't send requests to the API
+   * directly, we can't use oxide.ts to make requests and parse responses.
+   * Instead, we use its types, and copy over helper functions to format
+   * responses into the expected format.
+   */
+  async request<T>(
+    url: string,
+    method = 'GET',
+    params?: string,
+    data?: object
+  ): Promise<{ status: number; statusText: string; data: T }> {
+    const response = await lastValueFrom(
+      getBackendSrv().fetch({
+        method: method,
+        url: `${this.baseUrl}${url}${params?.length ? `?${params}` : ''}`,
+        data: data,
+      })
+    );
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      data: processResponseBody(response.data) as T,
+    };
   }
 
-  async paginate(url: string, params?: Record<string, string>) {
+  async paginate<T>(url: string, params?: Record<string, string>): Promise<T[]> {
     params = params || {};
-    const items: any[] = [];
+    const items: T[] = [];
     while (true) {
-      const response = await this.request(url, 'GET', new URLSearchParams(params).toString());
-      const raw: any = response.data;
-      raw.items.forEach((item: any) => {
+      const response = await this.request<{ items: T[]; nextPage?: string }>(
+        url,
+        'GET',
+        new URLSearchParams(params).toString()
+      );
+      response.data.items.forEach((item) => {
         items.push(item);
       });
-      if (raw.next_page) {
-        params.page_token = raw.next_page;
+      if (response.data.nextPage) {
+        params.page_token = response.data.nextPage;
       } else {
         break;
       }

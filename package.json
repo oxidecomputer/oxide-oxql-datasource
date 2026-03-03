@@ -69,8 +69,9 @@
     "@grafana/data": "^12.1.0",
     "@grafana/i18n": "^12.1.0",
     "@grafana/runtime": "^12.1.0",
-    "@grafana/ui": "^12.1.0",
     "@grafana/schema": "^12.1.0",
+    "@grafana/ui": "^12.1.0",
+    "@oxide/api": "^0.5.1",
     "react": "18.2.0",
     "react-dom": "18.2.0"
   },
