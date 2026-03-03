@@ -1,6 +1,7 @@
 import React from 'react';
 import { InlineField, Stack, CodeEditor, monacoTypes, Input } from '@grafana/ui';
 import { QueryEditorProps } from '@grafana/data';
+import type { TimeseriesSchema } from '@oxide/api';
 import { DataSource } from '../datasource';
 import { OxqlOptions, OxqlQuery } from '../types';
 
@@ -19,13 +20,14 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery }: Props) 
     const metrics: string[] = [];
     let params = '';
     while (true) {
-      const response = await datasource.request('/v1/system/timeseries/schemas', 'GET', params);
-      const raw: any = response.data;
-      raw.items.forEach((item: any) => {
-        metrics.push(item.timeseries_name);
+      const response = await datasource.request<{ items: TimeseriesSchema[]; nextPage?: string }>(
+        '/v1/system/timeseries/schemas', 'GET', params
+      );
+      response.data.items.forEach((item) => {
+        metrics.push(item.timeseriesName);
       });
-      if (raw.next_page) {
-        params = `page_token=${raw.next_page}`;
+      if (response.data.nextPage) {
+        params = `page_token=${response.data.nextPage}`;
       } else {
         break;
       }
