@@ -11,7 +11,7 @@ import {
   DataFrame,
 } from '@grafana/data';
 
-import type { OxqlQueryResult, Silo, Project, TimeseriesQuery } from '@oxide/api';
+import type { OxqlQueryResult, OxqlTable, Silo, Project, TimeseriesQuery } from '@oxide/api';
 import { OxqlQuery, OxqlOptions, DEFAULT_QUERY, processResponseBody, snakeToCamel } from './types';
 import { lastValueFrom } from 'rxjs';
 
@@ -150,62 +150,11 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
         let query = target.queryText;
         query = `${query} | filter timestamp > @${from} && timestamp < @${to}`;
         query = getTemplateSrv().replace(query, options.scopedVars);
-        const legendFormat = target.legendFormat;
 
         const body: TimeseriesQuery = { query: query };
         const response = await this.request<OxqlQueryResult>(QUERY_URL, 'POST', '', body);
 
-        const frames: DataFrame[] = [];
-        for (const table of response.data.tables) {
-          // Parse timeseries names. In most cases, this field holds the name of a single timeseries.
-          // But if the query includes a `| join`, the `name` field holds a comma-separated list of
-          // joined timeseries names, in order.
-          const seriesNames = table.name.split(',');
-
-          for (const series of table.timeseries) {
-            let labels: Record<string, string> = Object.fromEntries(
-              Object.entries(series.fields).map(([key, value]) => {
-                // Cast values to string to ensure falsy values are rendered properly.
-                return [key, String(value.value)];
-              })
-            );
-
-            // Enrich with labels from Oxide API.
-            if (labels.siloId && silos[labels.siloId]) {
-              labels.siloName = silos[labels.siloId];
-            }
-            if (labels.projectId && projects[labels.projectId]) {
-              labels.projectName = projects[labels.projectId];
-            }
-
-            // Optionally render custom legend.
-            if (legendFormat) {
-              const legend = renderLegend(legendFormat, labels);
-              labels = { legend: legend };
-            }
-
-            if (series.points.values.length !== seriesNames.length) {
-              throw new Error(`Expected ${seriesNames.length} value dimensions but got ${series.points.values.length}`);
-            }
-            for (const [idx, value] of series.points.values.entries()) {
-              frames.push(
-                createDataFrame({
-                  name: seriesNames[idx],
-                  refId: target.refId,
-                  fields: [
-                    { name: 'Time', values: series.points.timestamps, type: FieldType.time },
-                    {
-                      name: 'Value',
-                      values: value.values.values.slice(1),
-                      labels: labels,
-                    },
-                  ],
-                })
-              );
-            }
-          }
-        }
-        return frames;
+        return buildDataFrames(response.data.tables, target, silos, projects);
       })
     );
 
@@ -299,9 +248,82 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
   }
 }
 
-/**
- * Render legendFormat templates with provided variables.
- */
+export function buildDataFrames(
+  tables: OxqlTable[],
+  target: OxqlQuery,
+  silos: Record<string, string>,
+  projects: Record<string, string>
+): DataFrame[] {
+  const frames: DataFrame[] = [];
+
+  for (const table of tables) {
+    // Parse timeseries names. In most cases, this field holds the name of a single timeseries.
+    // But if the query includes a `| join`, the `name` field holds a comma-separated list of
+    // joined timeseries names, in order.
+    const seriesNames = table.name.split(',');
+
+    for (const series of table.timeseries) {
+      let labels: Record<string, string> = Object.fromEntries(
+        Object.entries(series.fields).map(([key, value]) => {
+          // Cast values to string to ensure falsy values are rendered properly.
+          return [key, String(value.value)];
+        })
+      );
+
+      // Enrich with labels from Oxide API.
+      if (labels.siloId && silos[labels.siloId]) {
+        labels.siloName = silos[labels.siloId];
+      }
+      if (labels.projectId && projects[labels.projectId]) {
+        labels.projectName = projects[labels.projectId];
+      }
+
+      // Optionally render custom legend.
+      if (target.legendFormat) {
+        const legend = renderLegend(target.legendFormat, labels);
+        labels = { legend: legend };
+      }
+
+      if (series.points.values.length !== seriesNames.length) {
+        throw new Error(
+          `Expected ${seriesNames.length} value dimension(s) for [${seriesNames.join(', ')}]; got ${
+            series.points.values.length
+          }`
+        );
+      }
+      for (const [idx, value] of series.points.values.entries()) {
+        // OxQL transparently converts cumulative metrics to deltas. However, the 0th value of
+        // each resulting delta series represents the cumulative total of the series from its start
+        // time to the timestamp of the 0th point. Because it's on a very different scale than the
+        // following values, we omit it here. Note that series resets also use cumulative values,
+        // but because they span a short time window, we don't omit them.
+        let dataValues = value.values.values;
+        let timestamps = series.points.timestamps;
+        if (value.metricType === 'delta') {
+          dataValues = dataValues.slice(1);
+          timestamps = timestamps.slice(1);
+        }
+        frames.push(
+          createDataFrame({
+            name: seriesNames[idx],
+            refId: target.refId,
+            fields: [
+              { name: 'Time', values: timestamps, type: FieldType.time },
+              {
+                name: 'Value',
+                values: dataValues,
+                labels: labels,
+              },
+            ],
+          })
+        );
+      }
+    }
+  }
+
+  return frames;
+}
+
 function renderLegend(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) => {
     return vars[key] || match;
