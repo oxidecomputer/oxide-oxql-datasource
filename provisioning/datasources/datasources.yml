@@ -9,6 +9,6 @@ datasources:
     version: 1
     editable: true
     jsonData:
-      path: '/resources'
+      host: ${OXIDE_HOST}
     secureJsonData:
-      apiKey: 'api-key'
+      apiKey: ${OXIDE_API_KEY}
