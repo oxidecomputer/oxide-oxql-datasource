@@ -19,21 +19,13 @@ export const DEFAULT_QUERY: Partial<OxqlQuery> = {
  * SPDX-License-Identifier: MPL-2.0
  */
 
-export const snakeToCamel = (s: string) =>
-  s.replace(/_./g, (l) => l[1].toUpperCase());
+export const snakeToCamel = (s: string) => s.replace(/_./g, (l) => l[1].toUpperCase());
 
 export const isObjectOrArray = (o: unknown) =>
-  typeof o === 'object' &&
-  !(o instanceof Date) &&
-  !(o instanceof RegExp) &&
-  !(o instanceof Error) &&
-  o !== null;
+  typeof o === 'object' && !(o instanceof Date) && !(o instanceof RegExp) && !(o instanceof Error) && o !== null;
 
 export const mapObj =
-  (
-    kf: (k: string) => string,
-    vf: (k: string | undefined, v: unknown) => unknown = (_, v) => v,
-  ) =>
+  (kf: (k: string) => string, vf: (k: string | undefined, v: unknown) => unknown = (_, v) => v) =>
   (o: unknown): unknown => {
     if (!isObjectOrArray(o)) {
       return o;
@@ -56,10 +48,7 @@ export const parseIfDate = (k: string | undefined, v: unknown) => {
   if (
     typeof v === 'string' &&
     isoDateRegex.test(v) &&
-    (k?.startsWith('time_') ||
-      k?.endsWith('_time') ||
-      k?.endsWith('_expiration') ||
-      k === 'timestamp')
+    (k?.startsWith('time_') || k?.endsWith('_time') || k?.endsWith('_expiration') || k === 'timestamp')
   ) {
     const d = new Date(v);
     if (isNaN(d.getTime())) {

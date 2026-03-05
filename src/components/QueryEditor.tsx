@@ -21,7 +21,9 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery }: Props) 
     let params = '';
     while (true) {
       const response = await datasource.request<{ items: TimeseriesSchema[]; nextPage?: string }>(
-        '/v1/system/timeseries/schemas', 'GET', params
+        '/v1/system/timeseries/schemas',
+        'GET',
+        params
       );
       response.data.items.forEach((item) => {
         metrics.push(item.timeseriesName);

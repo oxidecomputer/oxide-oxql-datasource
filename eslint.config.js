@@ -1,30 +1,30 @@
-const grafanaConfig = require("@grafana/eslint-config/flat");
+const grafanaConfig = require('@grafana/eslint-config/flat');
 
 module.exports = [
   {
-    ignores: ["dist/", "node_modules/", ".config/", "artifacts/", "work/", "ci/", "coverage/"],
+    ignores: ['dist/', 'node_modules/', '.config/', 'artifacts/', 'work/', 'ci/', 'coverage/'],
   },
   ...grafanaConfig,
   {
     rules: {
-      "react/prop-types": "off",
+      'react/prop-types': 'off',
     },
   },
   {
-    files: ["src/**/*.{ts,tsx}"],
+    files: ['src/**/*.{ts,tsx}'],
     languageOptions: {
       parserOptions: {
-        project: "./tsconfig.json",
+        project: './tsconfig.json',
       },
     },
     rules: {
-      "@typescript-eslint/no-deprecated": "warn",
+      '@typescript-eslint/no-deprecated': 'warn',
     },
   },
   {
-    files: ["tests/**/*"],
+    files: ['tests/**/*'],
     rules: {
-      "react-hooks/rules-of-hooks": "off",
+      'react-hooks/rules-of-hooks': 'off',
     },
   },
 ];
