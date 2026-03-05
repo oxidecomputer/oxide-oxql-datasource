@@ -1,5 +1,4 @@
 import { getBackendSrv, getTemplateSrv, isFetchError } from '@grafana/runtime';
-import _ from 'lodash';
 import {
   CoreApp,
   DataQueryRequest,
@@ -9,6 +8,7 @@ import {
   createDataFrame,
   FieldType,
   MetricFindValue,
+  DataFrame,
 } from '@grafana/data';
 
 import type { OxqlQueryResult, Silo, Project, TimeseriesQuery } from '@oxide/api';
@@ -140,7 +140,7 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
     // but this would add more latency to the 0th query on the page.
     //
     // TODO: add human-readable labels to metrics in oximeter so that we don't
-    // have to enrich them here.  Tracked in
+    // have to enrich them here. Tracked in
     // https://github.com/oxidecomputer/omicron/issues/9119.
     const silos = await this.getSilos();
     const projects = await this.getProjects();
@@ -155,12 +155,17 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
         const body: TimeseriesQuery = { query: query };
         const response = await this.request<OxqlQueryResult>(QUERY_URL, 'POST', '', body);
 
-        return response.data.tables.map((table) => {
-          return table.timeseries.map((series) => {
+        const frames: DataFrame[] = [];
+        for (const table of response.data.tables) {
+          // Parse timeseries names. In most cases, this field holds the name of a single timeseries.
+          // But if the query includes a `| join`, the `name` field holds a comma-separated list of
+          // joined timeseries names, in order.
+          const seriesNames = table.name.split(',');
+
+          for (const series of table.timeseries) {
             let labels: Record<string, string> = Object.fromEntries(
               Object.entries(series.fields).map(([key, value]) => {
-                // Cast values to string to ensure falsy values are rendered
-                // properly.
+                // Cast values to string to ensure falsy values are rendered properly.
                 return [key, String(value.value)];
               })
             );
@@ -179,23 +184,32 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
               labels = { legend: legend };
             }
 
-            return createDataFrame({
-              refId: target.refId,
-              fields: [
-                { name: 'Time', values: series.points.timestamps, type: FieldType.time },
-                {
-                  name: 'Value',
-                  values: series.points.values[0].values.values.slice(1),
-                  labels: labels,
-                },
-              ],
-            });
-          });
-        });
+            if (series.points.values.length !== seriesNames.length) {
+              throw new Error(`Expected ${seriesNames.length} value dimensions but got ${series.points.values.length}`);
+            }
+            for (const [idx, value] of series.points.values.entries()) {
+              frames.push(
+                createDataFrame({
+                  name: seriesNames[idx],
+                  refId: target.refId,
+                  fields: [
+                    { name: 'Time', values: series.points.timestamps, type: FieldType.time },
+                    {
+                      name: 'Value',
+                      values: value.values.values.slice(1),
+                      labels: labels,
+                    },
+                  ],
+                })
+              );
+            }
+          }
+        }
+        return frames;
       })
     );
 
-    return { data: _.flattenDeep(frames) };
+    return { data: frames.flat() };
   }
 
   /**
