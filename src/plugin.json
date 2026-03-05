@@ -1,21 +1,26 @@
 {
   "$schema": "https://raw.githubusercontent.com/grafana/grafana/main/docs/sources/developers/plugins/plugin.schema.json",
   "type": "datasource",
-  "name": "Oxql",
+  "name": "Oxide OxQL",
   "id": "oxide-oxql-datasource",
   "metrics": true,
   "info": {
-    "description": "",
+    "description": "Query and visualize metrics from an Oxide rack using OxQL.",
     "author": {
-      "name": "Oxide"
+      "name": "Oxide",
+      "url": "https://oxide.computer"
     },
-    "keywords": ["datasource"],
+    "keywords": ["datasource", "oxide", "oxql", "metrics", "timeseries"],
     "logos": {
       "small": "img/logo.svg",
       "large": "img/logo.svg"
     },
-    "links": [],
-    "screenshots": [],
+    "links": [
+      { "name": "Source", "url": "https://github.com/oxidecomputer/oxide-oxql-datasource" },
+      { "name": "OxQL Documentation", "url": "https://docs.oxide.computer/guides/metrics/oxql-tutorial" },
+      { "name": "Oxide", "url": "https://oxide.computer" }
+    ],
+    "screenshots": [{ "name": "Explore", "path": "img/explore.png" }],
     "version": "%VERSION%",
     "updated": "%TODAY%"
   },
