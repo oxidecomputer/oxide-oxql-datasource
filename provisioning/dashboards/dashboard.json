@@ -1,0 +1,48 @@
+{
+  "uid": "oxide-oxql-example",
+  "title": "Oxide OxQL Example",
+  "tags": ["oxide"],
+  "timezone": "browser",
+  "refresh": "1m",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Bytes Sent",
+      "type": "timeseries",
+      "gridPos": { "h": 12, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "oxide-oxql-datasource", "uid": "oxide-oxql" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryText": "get sled_data_link:bytes_sent | align mean_within(5m)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "bytes" },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Bytes Received",
+      "type": "timeseries",
+      "gridPos": { "h": 12, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "oxide-oxql-datasource", "uid": "oxide-oxql" },
+      "targets": [
+        {
+          "refId": "A",
+          "queryText": "get sled_data_link:bytes_received | align mean_within(5m)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "bytes" },
+        "overrides": []
+      }
+    }
+  ],
+  "schemaVersion": 39
+}

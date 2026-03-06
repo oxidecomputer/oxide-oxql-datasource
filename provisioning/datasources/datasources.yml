@@ -2,6 +2,7 @@ apiVersion: 1
 
 datasources:
   - name: 'oxql'
+    uid: 'oxide-oxql'
     type: 'oxide-oxql-datasource'
     access: proxy
     isDefault: false
