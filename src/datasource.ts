@@ -11,8 +11,9 @@ import {
   DataFrame,
 } from '@grafana/data';
 
-import type { OxqlQueryResult, OxqlTable, Silo, Project, TimeseriesQuery } from '@oxide/api';
-import { OxqlQuery, OxqlOptions, DEFAULT_QUERY, processResponseBody, snakeToCamel } from './types';
+import type { OxqlQueryResult, OxqlTable, Silo, Project, TimeseriesQuery, TimeseriesSchema } from '@oxide/api';
+import { OxqlQuery, OxqlOptions, OxqlVariableQuery, DEFAULT_QUERY, processResponseBody } from './types';
+import { OxqlVariableSupport } from './variableSupport';
 import { lastValueFrom } from 'rxjs';
 
 const QUERY_URL = '/v1/system/timeseries/query';
@@ -23,10 +24,12 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
   baseUrl: string;
   projects: Record<string, string> = {};
   silos: Record<string, string> = {};
+  schemas: TimeseriesSchema[] = [];
 
   constructor(instanceSettings: DataSourceInstanceSettings<OxqlOptions>) {
     super(instanceSettings);
     this.baseUrl = instanceSettings.url!;
+    this.variables = new OxqlVariableSupport(this);
   }
 
   getDefaultQuery(_: CoreApp): Partial<OxqlQuery> {
@@ -37,66 +40,73 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
     return !!query.queryText;
   }
 
+  async getSchemas(): Promise<TimeseriesSchema[]> {
+    if (!this.schemas.length) {
+      this.schemas = await this.paginate<TimeseriesSchema>('/v1/system/timeseries/schemas');
+    }
+    return this.schemas;
+  }
+
+  async listMetrics(): Promise<string[]> {
+    const schemas = await this.getSchemas();
+    return schemas.map((schema) => schema.timeseriesName);
+  }
+
+  async getFieldsForMetric(metric: string): Promise<{ fields: string[]; displayFields: string[] }> {
+    const schemas = await this.getSchemas();
+    const schema = schemas.find((schema) => schema.timeseriesName === metric);
+    if (!schema) {
+      return { fields: [], displayFields: [] };
+    }
+    const fields = schema.fieldSchema.map((field) => field.name);
+
+    // Human-readable display fields for enrichment. These only exist as
+    // display labels and can't be used in OxQL queries.
+    const displayFields: string[] = [];
+    if (fields.includes('silo_id')) {
+      displayFields.push('silo_name');
+    }
+    if (fields.includes('project_id')) {
+      displayFields.push('project_name');
+    }
+
+    return { fields, displayFields };
+  }
+
   /**
-   * metricFindQuery is used by Grafana to identify the set of potential values
-   * for a template variable, based on the user's query. This implementation
-   * allows users to define variable values based on an OxQL query using the
-   * `label_values(metric_name, id, [label])` function. We query OxQL for the
-   * given metric name, then use the labels defined by `id` and `label` as the
-   * values and labels for the template variable.
+   * Execute a variable query and return unique values for the given metric fields.
    */
-  async metricFindQuery(query: string): Promise<MetricFindValue[]> {
+  async executeVariableQuery(query: OxqlVariableQuery): Promise<MetricFindValue[]> {
+    if (!query.metric) {
+      return [];
+    }
+
     const labels: Record<string, string> = {};
 
-    // Match `label_values(metric, id_label)` or `label_values(metric,
-    // id_label, label_label)`.
-    //
-    // TODO: implement a custom UI with `CustomVariableSupport` and drop this
-    // DSL.
-    const pattern = /label_values\((?<metric>[\w:]+),\s*(?<value>\w+)(,\s(?<label>\w+))?\)/;
-    const match = query.match(pattern);
+    const valueField = query.valueField;
+    const textField = query.textField && query.textField.length > 0 ? query.textField : query.valueField;
+    const body: TimeseriesQuery = { query: `get ${query.metric} | filter timestamp > @now() - 5m | last 1` };
+    const response = await this.request<OxqlQueryResult>(QUERY_URL, 'POST', '', body);
 
-    if (match && match.groups) {
-      const groups = match.groups;
-      groups.label = groups.label || groups.value;
-      // Convert user-provided field names from snake_case to camelCase to
-      // match the converted API response keys.
-      const valueField = snakeToCamel(groups.value);
-      const labelField = snakeToCamel(groups.label);
-      const body: TimeseriesQuery = { query: `get ${groups.metric} | filter timestamp > @now() - 5m | last 1` };
-      const response = await this.request<OxqlQueryResult>(QUERY_URL, 'POST', '', body);
+    // Fetch related resources if requested.
+    const silos = textField === 'silo_name' || valueField === 'silo_name' ? await this.getSilos() : {};
+    const projects = textField === 'project_name' || valueField === 'project_name' ? await this.getProjects() : {};
 
-      // Fetch additional metadata from Oxide API if requested.
-      let silos: Record<string, string> = {};
-      if (labelField === 'siloName' || valueField === 'siloName') {
-        silos = await this.getSilos();
-      }
-      let projects: Record<string, string> = {};
-      if (labelField === 'projectName' || valueField === 'projectName') {
-        projects = await this.getProjects();
-      }
+    response.data.tables.forEach((table) => {
+      table.timeseries.forEach((series) => {
+        const fields = series.fields as Record<string, { value: string | number | boolean }>;
+        if ('silo_id' in fields && silos[fields['silo_id'].value as string]) {
+          fields['silo_name'] = { value: silos[fields['silo_id'].value as string] };
+        }
+        if ('project_id' in fields && projects[fields['project_id'].value as string]) {
+          fields['project_name'] = { value: projects[fields['project_id'].value as string] };
+        }
 
-      response.data.tables.forEach((table) => {
-        table.timeseries.forEach((series) => {
-          const fields = series.fields as Record<string, { value: string | number | boolean }>;
-          // Enrich series with additional metadata if requested.
-          if (labelField === 'siloName' || valueField === 'siloName') {
-            if ('siloId' in fields && silos[fields['siloId'].value as string]) {
-              fields['siloName'] = { value: silos[fields['siloId'].value as string] };
-            }
-          }
-          if (labelField === 'projectName' || valueField === 'projectName') {
-            if ('projectId' in fields && projects[fields['projectId'].value as string]) {
-              fields['projectName'] = { value: projects[fields['projectId'].value as string] };
-            }
-          }
-
-          if (valueField in fields && labelField in fields) {
-            labels[fields[valueField].value as string] = fields[labelField].value as string;
-          }
-        });
+        if (valueField in fields && textField in fields) {
+          labels[fields[valueField].value as string] = fields[textField].value as string;
+        }
       });
-    }
+    });
 
     const findValues: MetricFindValue[] = Object.keys(labels).map((key) => ({
       text: labels[key],
@@ -149,6 +159,7 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
       options.targets.map(async (target) => {
         let query = target.queryText;
         query = `${query} | filter timestamp > @${from} && timestamp < @${to}`;
+        query = expandMultiValueFilters(query);
         query = getTemplateSrv().replace(query, options.scopedVars);
 
         const body: TimeseriesQuery = { query: query };
@@ -212,7 +223,7 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
   }
 
   /**
-   * Checks whether we can connect to the API.
+   * Check whether we can connect to the API.
    */
   async testDatasource() {
     const defaultErrorMessage = 'Cannot connect to API';
@@ -271,11 +282,11 @@ export function buildDataFrames(
       );
 
       // Enrich with labels from Oxide API.
-      if (labels.siloId && silos[labels.siloId]) {
-        labels.siloName = silos[labels.siloId];
+      if (labels.silo_id && silos[labels.silo_id]) {
+        labels.silo_name = silos[labels.silo_id];
       }
-      if (labels.projectId && projects[labels.projectId]) {
-        labels.projectName = projects[labels.projectId];
+      if (labels.project_id && projects[labels.project_id]) {
+        labels.project_name = projects[labels.project_id];
       }
 
       // Optionally render custom legend.
@@ -327,5 +338,46 @@ export function buildDataFrames(
 function renderLegend(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) => {
     return vars[key] || match;
+  });
+}
+
+/**
+ * Expand multi-value template variables in OxQL filter expressions.
+ *
+ * Note: we could use the regexp operator here instead, but OxQL only
+ * supports regexp for string labels, which isn't enough for general use.
+ */
+function expandMultiValueFilters(query: string): string {
+  const variables = getTemplateSrv().getVariables() as Array<{ name: string; multi?: boolean; includeAll?: boolean }>;
+
+  for (const variable of variables) {
+    if (!variable.multi && !variable.includeAll) {
+      continue;
+    }
+
+    const current = (variable as { current?: { value: unknown } }).current?.value;
+    if (!Array.isArray(current)) {
+      continue;
+    }
+    query = expandVariable(query, variable.name, current);
+  }
+
+  return query;
+}
+
+/**
+ * Expand a variable reference in a query, either expanding the filter into
+ * a set of '||'-joined filters if multiple values set, or removing it
+ * entirely if set to $__all.
+ */
+export function expandVariable(query: string, varName: string, values: string[]): string {
+  if (values.includes('$__all') || values.length === 0) {
+    const pattern = new RegExp(`\\s*\\|\\s*filter\\s+\\w+\\s*==\\s*["']\\$\\{?${varName}\\}?["']`, 'g');
+    return query.replace(pattern, '');
+  }
+  const pattern = new RegExp(`(\\w+)\\s*==\\s*["']\\$\\{?${varName}\\}?["']`, 'g');
+  return query.replace(pattern, (_, field) => {
+    const expanded = values.map((v) => `${field} == "${v}"`).join(' || ');
+    return `(${expanded})`;
   });
 }

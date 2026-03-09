@@ -7,6 +7,15 @@ export interface OxqlQuery extends DataQuery {
   legendFormat?: string;
 }
 
+export interface OxqlVariableQuery extends DataQuery {
+  metric: string;
+  valueField: string;
+
+  // Optional display field. Useful for showing human-readable labels
+  // (like silo_name) when the underlying variable is a uuid (like silo_id).
+  textField?: string;
+}
+
 export const DEFAULT_QUERY: Partial<OxqlQuery> = {
   constant: 6.5,
 };
@@ -25,19 +34,24 @@ export const isObjectOrArray = (o: unknown) =>
   typeof o === 'object' && !(o instanceof Date) && !(o instanceof RegExp) && !(o instanceof Error) && o !== null;
 
 export const mapObj =
-  (kf: (k: string) => string, vf: (k: string | undefined, v: unknown) => unknown = (_, v) => v) =>
-  (o: unknown): unknown => {
+  (kf: (k: string) => string, vf: (k: string | undefined, v: unknown) => unknown = (_, v) => v, skip?: Set<string>) =>
+  (o: unknown, path = ''): unknown => {
     if (!isObjectOrArray(o)) {
       return o;
     }
 
     if (Array.isArray(o)) {
-      return o.map(mapObj(kf, vf));
+      return o.map((item) => mapObj(kf, vf, skip)(item, path));
     }
 
     const newObj: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(o as Record<string, unknown>)) {
-      newObj[kf(k)] = isObjectOrArray(v) ? mapObj(kf, vf)(v) : vf(k, v);
+      const currentPath = path ? `${path}.${k}` : k;
+      if (skip?.has(currentPath)) {
+        newObj[k] = v;
+      } else {
+        newObj[kf(k)] = isObjectOrArray(v) ? mapObj(kf, vf, skip)(v, currentPath) : vf(k, v);
+      }
     }
     return newObj;
   };
@@ -59,7 +73,7 @@ export const parseIfDate = (k: string | undefined, v: unknown) => {
   return v;
 };
 
-export const processResponseBody = mapObj(snakeToCamel, parseIfDate);
+export const processResponseBody = mapObj(snakeToCamel, parseIfDate, new Set(['tables.timeseries.fields']));
 
 /**
  * These are options configured for each DataSource instance

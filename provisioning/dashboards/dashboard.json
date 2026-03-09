@@ -8,6 +8,25 @@
     "from": "now-1h",
     "to": "now"
   },
+  "templating": {
+    "list": [
+      {
+        "name": "sled_id",
+        "type": "query",
+        "label": "Sled",
+        "datasource": { "type": "oxide-oxql-datasource", "uid": "oxide-oxql" },
+        "query": {
+          "metric": "sled_data_link:bytes_sent",
+          "valueField": "sled_id",
+          "textField": "",
+          "refId": "A"
+        },
+        "refresh": 1,
+        "multi": true,
+        "includeAll": true
+      }
+    ]
+  },
   "panels": [
     {
       "id": 1,
@@ -18,7 +37,7 @@
       "targets": [
         {
           "refId": "A",
-          "queryText": "get sled_data_link:bytes_sent | align mean_within(5m)"
+          "queryText": "get sled_data_link:bytes_sent | filter sled_id == \"$sled_id\" | align mean_within(5m)"
         }
       ],
       "fieldConfig": {
@@ -35,7 +54,7 @@
       "targets": [
         {
           "refId": "A",
-          "queryText": "get sled_data_link:bytes_received | align mean_within(5m)"
+          "queryText": "get sled_data_link:bytes_received | filter sled_id == \"$sled_id\" | align mean_within(5m)"
         }
       ],
       "fieldConfig": {
