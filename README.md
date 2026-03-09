@@ -12,6 +12,15 @@ grafana cli plugins install oxide-oxql-datasource
 
 Or download the latest release from the [releases page](https://github.com/oxidecomputer/oxide-oxql-datasource/releases) and extract it to your Grafana plugins directory.
 
+The plugin is not yet signed. Until it is, you can allow Grafana to load it without a signature:
+
+```ini
+[plugins]
+allow_loading_unsigned_plugins = oxide-oxql-datasource
+```
+
+Or set the environment variable `GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=oxide-oxql-datasource`.
+
 ## Configuration
 
 1. In Grafana, navigate to **Connections > Data Sources > Add data source**.
