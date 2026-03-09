@@ -75,5 +75,8 @@
     "react": "18.2.0",
     "react-dom": "18.2.0"
   },
-  "packageManager": "npm@11.5.1"
+  "packageManager": "npm@11.5.1",
+  "overrides": {
+    "serialize-javascript": "^7.0.3"
+  }
 }
