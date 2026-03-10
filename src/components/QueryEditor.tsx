@@ -1,7 +1,6 @@
 import React from 'react';
 import { InlineField, Stack, CodeEditor, monacoTypes, Input } from '@grafana/ui';
 import { QueryEditorProps } from '@grafana/data';
-import type { TimeseriesSchema } from '@oxide/api';
 import { DataSource } from '../datasource';
 import { OxqlOptions, OxqlQuery } from '../types';
 
@@ -16,29 +15,8 @@ export function QueryEditor({ datasource, query, onChange, onRunQuery }: Props) 
     onChange({ ...query, legendFormat: event.currentTarget.value });
   };
 
-  const listMetrics = async () => {
-    const metrics: string[] = [];
-    let params = '';
-    while (true) {
-      const response = await datasource.request<{ items: TimeseriesSchema[]; nextPage?: string }>(
-        '/v1/system/timeseries/schemas',
-        'GET',
-        params
-      );
-      response.data.items.forEach((item) => {
-        metrics.push(item.timeseriesName);
-      });
-      if (response.data.nextPage) {
-        params = `page_token=${response.data.nextPage}`;
-      } else {
-        break;
-      }
-    }
-    return metrics;
-  };
-
   const handleEditorMount = async (editor: monacoTypes.editor.IStandaloneCodeEditor, monaco: typeof monacoTypes) => {
-    const metrics = await listMetrics();
+    const metrics = await datasource.listMetrics();
 
     // Define a simple Monaco language for OxQL.
     monaco.languages.register({ id: 'oxql' });

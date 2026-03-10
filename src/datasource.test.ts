@@ -1,10 +1,12 @@
 import { FieldType } from '@grafana/data';
-import type { OxqlTable } from '@oxide/api';
-import { buildDataFrames } from './datasource';
+import type { OxqlTable, TimeseriesSchema } from '@oxide/api';
+import { buildDataFrames, DataSource } from './datasource';
 import { type OxqlQuery, processResponseBody } from './types';
 
-const makeTable = (name: string, timeseries: unknown[]): OxqlTable =>
-  processResponseBody({ name, timeseries }) as OxqlTable;
+const makeTable = (name: string, timeseries: unknown[]): OxqlTable => {
+  const result = processResponseBody({ tables: [{ name, timeseries }] }) as { tables: OxqlTable[] };
+  return result.tables[0];
+};
 
 const target = { refId: 'A', queryText: '' } as OxqlQuery;
 
@@ -131,10 +133,10 @@ describe('buildDataFrames', () => {
     const frames = buildDataFrames(tables, target, silos, projects);
 
     expect(frames[0].fields[1].labels).toEqual({
-      siloId: 'silo-1',
-      siloName: 'my-silo',
-      projectId: 'proj-1',
-      projectName: 'my-project',
+      silo_id: 'silo-1',
+      silo_name: 'my-silo',
+      project_id: 'proj-1',
+      project_name: 'my-project',
     });
   });
 
@@ -154,7 +156,7 @@ describe('buildDataFrames', () => {
       ]),
     ];
 
-    const targetWithLegend = { ...target, legendFormat: '{{ kind }} - {{ linkName }}' };
+    const targetWithLegend = { ...target, legendFormat: '{{ kind }} - {{ link_name }}' };
     const frames = buildDataFrames(tables, targetWithLegend, {}, {});
 
     expect(frames[0].fields[1].labels).toEqual({ legend: 'vnic - eth0' });
@@ -198,5 +200,47 @@ describe('buildDataFrames', () => {
     expect(() => buildDataFrames(tables, target, {}, {})).toThrow(
       'Expected 1 value dimension(s) for [only_one_name]; got 2'
     );
+  });
+});
+
+describe('getFieldsForMetric', () => {
+  function makeDatasource(schemas: Array<Pick<TimeseriesSchema, 'timeseriesName' | 'fieldSchema'>>): DataSource {
+    const ds = { schemas } as unknown as DataSource;
+    ds.getSchemas = DataSource.prototype.getSchemas.bind(ds);
+    ds.getFieldsForMetric = DataSource.prototype.getFieldsForMetric.bind(ds);
+    return ds;
+  }
+
+  it('returns real fields for value and no synthetic display fields', async () => {
+    const ds = makeDatasource([
+      {
+        timeseriesName: 'metric:name',
+        fieldSchema: [
+          { name: 'kind', fieldType: 'string', source: 'target', description: '' },
+          { name: 'link_name', fieldType: 'string', source: 'target', description: '' },
+        ],
+      },
+    ]);
+
+    const result = await ds.getFieldsForMetric('metric:name');
+    expect(result.fields).toEqual(['kind', 'link_name']);
+    expect(result.displayFields).toEqual([]);
+  });
+
+  it('adds silo_name and project_name as display-only fields', async () => {
+    const ds = makeDatasource([
+      {
+        timeseriesName: 'metric:name',
+        fieldSchema: [
+          { name: 'silo_id', fieldType: 'uuid', source: 'target', description: '' },
+          { name: 'project_id', fieldType: 'uuid', source: 'target', description: '' },
+          { name: 'kind', fieldType: 'string', source: 'target', description: '' },
+        ],
+      },
+    ]);
+
+    const result = await ds.getFieldsForMetric('metric:name');
+    expect(result.fields).toEqual(['silo_id', 'project_id', 'kind']);
+    expect(result.displayFields).toEqual(['silo_name', 'project_name']);
   });
 });

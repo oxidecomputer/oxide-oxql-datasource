@@ -42,16 +42,6 @@ The plugin automatically appends a time range filter based on the Grafana time p
 
 Metric names autocomplete after the `get` keyword.
 
-### Template variables
-
-Define template variables using the `label_values` function in the variable query:
-
-```
-label_values(sled_data_link:bytes_sent, silo_id, silo_name)
-```
-
-This returns the distinct values of `silo_id` as variable values, labeled with the corresponding `silo_name`.
-
 ### Legend formatting
 
 Use the **Legend** field to customize series names:
