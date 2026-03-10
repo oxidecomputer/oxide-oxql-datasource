@@ -25,6 +25,7 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
   projects: Record<string, string> = {};
   silos: Record<string, string> = {};
   schemas: TimeseriesSchema[] = [];
+  fieldTypes: Map<string, string> = new Map();
 
   constructor(instanceSettings: DataSourceInstanceSettings<OxqlOptions>) {
     super(instanceSettings);
@@ -45,6 +46,18 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
       this.schemas = await this.paginate<TimeseriesSchema>('/v1/system/timeseries/schemas');
     }
     return this.schemas;
+  }
+
+  async getFieldTypes(): Promise<Map<string, string>> {
+    if (!this.fieldTypes.size) {
+      const schemas = await this.getSchemas();
+      for (const schema of schemas) {
+        for (const field of schema.fieldSchema) {
+          this.fieldTypes.set(field.name, field.fieldType);
+        }
+      }
+    }
+    return this.fieldTypes;
   }
 
   async listMetrics(): Promise<string[]> {
@@ -154,12 +167,13 @@ export class DataSource extends DataSourceApi<OxqlQuery, OxqlOptions> {
     // https://github.com/oxidecomputer/omicron/issues/9119.
     const silos = await this.getSilos();
     const projects = await this.getProjects();
+    const fieldTypes = await this.getFieldTypes();
 
     const frames = await Promise.all(
       options.targets.map(async (target) => {
         let query = target.queryText;
         query = `${query} | filter timestamp > @${from} && timestamp < @${to}`;
-        query = expandMultiValueFilters(query);
+        query = expandMultiValueFilters(query, fieldTypes);
         query = getTemplateSrv().replace(query, options.scopedVars);
 
         const body: TimeseriesQuery = { query: query };
@@ -342,12 +356,19 @@ function renderLegend(template: string, vars: Record<string, string>): string {
 }
 
 /**
+ * OxQL field types that require quoted literals in filter expressions.
+ * Strings, UUIDs, and IP addresses are quoted; integers and booleans
+ * are not. See https://docs.oxide.computer/guides/metrics/oxql-tutorial.
+ */
+const QUOTED_FIELD_TYPES: Set<string> = new Set(['string', 'uuid', 'ip_addr']);
+
+/**
  * Expand multi-value template variables in OxQL filter expressions.
  *
  * Note: we could use the regexp operator here instead, but OxQL only
  * supports regexp for string labels, which isn't enough for general use.
  */
-function expandMultiValueFilters(query: string): string {
+function expandMultiValueFilters(query: string, fieldTypes: Map<string, string>): string {
   const variables = getTemplateSrv().getVariables() as Array<{ name: string; multi?: boolean; includeAll?: boolean }>;
 
   for (const variable of variables) {
@@ -359,7 +380,12 @@ function expandMultiValueFilters(query: string): string {
     if (!Array.isArray(current)) {
       continue;
     }
-    query = expandVariable(query, variable.name, current);
+    const fieldType = fieldTypes.get(variable.name);
+    if (fieldType === undefined) {
+      continue;
+    }
+    const quote = QUOTED_FIELD_TYPES.has(fieldType);
+    query = expandVariable(query, variable.name, current, quote);
   }
 
   return query;
@@ -370,14 +396,19 @@ function expandMultiValueFilters(query: string): string {
  * a set of '||'-joined filters if multiple values set, or removing it
  * entirely if set to $__all.
  */
-export function expandVariable(query: string, varName: string, values: string[]): string {
+export function expandVariable(query: string, varName: string, values: string[], quote: boolean): string {
   if (values.includes('$__all') || values.length === 0) {
     const pattern = new RegExp(`\\s*\\|\\s*filter\\s+\\w+\\s*==\\s*["']\\$\\{?${varName}\\}?["']`, 'g');
     return query.replace(pattern, '');
   }
   const pattern = new RegExp(`(\\w+)\\s*==\\s*["']\\$\\{?${varName}\\}?["']`, 'g');
   return query.replace(pattern, (_, field) => {
-    const expanded = values.map((v) => `${field} == "${v}"`).join(' || ');
+    const expanded = values
+      .map((v) => {
+        const literal = quote ? `"${v}"` : v;
+        return `${field} == ${literal}`;
+      })
+      .join(' || ');
     return `(${expanded})`;
   });
 }
