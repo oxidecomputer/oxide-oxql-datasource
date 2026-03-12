@@ -36,7 +36,7 @@ describe('buildDataFrames', () => {
             name: 'Time',
             type: FieldType.time,
             config: {},
-            values: ['2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z'],
+            values: [new Date('2026-01-01T00:00:00Z').getTime(), new Date('2026-01-01T00:01:00Z').getTime()],
           },
           {
             name: 'Value',
@@ -78,7 +78,7 @@ describe('buildDataFrames', () => {
             name: 'Time',
             type: FieldType.time,
             config: {},
-            values: ['2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z'],
+            values: [new Date('2026-01-01T00:00:00Z').getTime(), new Date('2026-01-01T00:01:00Z').getTime()],
           },
           {
             name: 'Value',
@@ -98,7 +98,7 @@ describe('buildDataFrames', () => {
             name: 'Time',
             type: FieldType.time,
             config: {},
-            values: ['2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z'],
+            values: [new Date('2026-01-01T00:00:00Z').getTime(), new Date('2026-01-01T00:01:00Z').getTime()],
           },
           {
             name: 'Value',
@@ -177,8 +177,57 @@ describe('buildDataFrames', () => {
 
     const frames = buildDataFrames(tables, target, {}, {});
 
-    expect(frames[0].fields[0].values).toEqual(['2026-01-01T00:01:00Z', '2026-01-01T00:02:00Z']);
+    expect(frames[0].fields[0].values).toEqual([
+      new Date('2026-01-01T00:01:00Z').getTime(),
+      new Date('2026-01-01T00:02:00Z').getTime(),
+    ]);
     expect(frames[0].fields[1].values).toEqual([100, 200]);
+  });
+
+  it('converts distribution metrics into wide heatmap-rows frame', () => {
+    const tables = [
+      makeTable('http_service:request_latency_histogram', [
+        {
+          fields: { route: { type: 'string', value: '/api/v1' } },
+          points: {
+            timestamps: ['2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z', '2026-01-01T00:02:00Z'],
+            values: [
+              {
+                metric_type: 'delta',
+                values: {
+                  type: 'integer_distribution',
+                  values: [
+                    { bins: [10, 100, 1000], counts: [0, 0, 0], squared_mean: 0, sum_of_samples: 0 },
+                    { bins: [10, 100, 1000], counts: [5, 20, 3], squared_mean: 0, sum_of_samples: 0 },
+                    { bins: [10, 100, 1000], counts: [8, 30, 7], squared_mean: 0, sum_of_samples: 0 },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      ]),
+    ];
+
+    // Delta: 0th distribution is skipped. Wide frame with one field per bin.
+    // Timestamps are converted to epoch ms for heatmap compatibility.
+    const frames = buildDataFrames(tables, target, {}, {});
+
+    const timestamps = [new Date('2026-01-01T00:01:00Z').getTime(), new Date('2026-01-01T00:02:00Z').getTime()];
+    expect(frames).toEqual([
+      {
+        name: 'http_service:request_latency_histogram',
+        refId: 'A',
+        length: 2,
+        meta: { type: 'heatmap-rows' },
+        fields: [
+          { name: 'Time', type: FieldType.time, config: {}, values: timestamps },
+          { name: '10', type: FieldType.number, config: {}, values: [5, 8] },
+          { name: '100', type: FieldType.number, config: {}, values: [20, 30] },
+          { name: '1000', type: FieldType.number, config: {}, values: [3, 7] },
+        ],
+      },
+    ]);
   });
 
   it('throws when value dimensions do not match series names', () => {

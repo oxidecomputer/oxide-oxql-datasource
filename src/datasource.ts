@@ -7,11 +7,21 @@ import {
   DataSourceInstanceSettings,
   createDataFrame,
   FieldType,
+  DataFrameType,
   MetricFindValue,
   DataFrame,
 } from '@grafana/data';
 
-import type { OxqlQueryResult, OxqlTable, Silo, Project, TimeseriesQuery, TimeseriesSchema } from '@oxide/api';
+import type {
+  Distributiondouble,
+  Distributionint64,
+  OxqlQueryResult,
+  OxqlTable,
+  Silo,
+  Project,
+  TimeseriesQuery,
+  TimeseriesSchema,
+} from '@oxide/api';
 import { OxqlQuery, OxqlOptions, OxqlVariableQuery, DEFAULT_QUERY, processResponseBody } from './types';
 import { OxqlVariableSupport } from './variableSupport';
 import { lastValueFrom } from 'rxjs';
@@ -316,32 +326,50 @@ export function buildDataFrames(
           }`
         );
       }
+      // OxQL timestamps arrive as ISO strings; convert to epoch ms once
+      // and reuse across all value dimensions in this timeseries.
+      const timestamps = series.points.timestamps.map((t) => new Date(t as unknown as string).getTime());
+
       for (const [idx, value] of series.points.values.entries()) {
-        // OxQL transparently converts cumulative metrics to deltas. However, the 0th value of
-        // each resulting delta series represents the cumulative total of the series from its start
-        // time to the timestamp of the 0th point. Because it's on a very different scale than the
-        // following values, we omit it here. Note that series resets also use cumulative values,
-        // but because they span a short time window, we don't omit them.
-        let dataValues = value.values.values;
-        let timestamps = series.points.timestamps;
+        let slicedTimestamps = timestamps;
+        let values = value.values.values;
+
+        // OxQL transparently converts cumulative metrics to deltas. The
+        // 0th value of each resulting delta series represents the
+        // cumulative total from the series start time, so it's on a very
+        // different scale — skip it.
         if (value.metricType === 'delta') {
-          dataValues = dataValues.slice(1);
-          timestamps = timestamps.slice(1);
+          values = values.slice(1);
+          slicedTimestamps = timestamps.slice(1);
         }
-        frames.push(
-          createDataFrame({
-            name: seriesNames[idx],
-            refId: target.refId,
-            fields: [
-              { name: 'Time', values: timestamps, type: FieldType.time },
-              {
-                name: 'Value',
-                values: dataValues,
-                labels: labels,
-              },
-            ],
-          })
-        );
+
+        const valType = value.values.type;
+        if (valType === 'integer_distribution' || valType === 'double_distribution') {
+          // Distribution support in OxQL is minimal as of this writing.
+          // We can't align or aggregate histograms natively, and
+          // aggregating histograms is out of scope for the plugin. For
+          // working with histograms in Grafana, prefer to return a single
+          // distribution so that we can render a heatmap properly.
+          // Otherwise, Grafana may try to overlay multiple histograms in
+          // place, which isn't interpretable.
+          const dists = values as Array<Distribution | null>;
+          frames.push(buildDistributionFrame(seriesNames[idx], target.refId, slicedTimestamps, dists));
+        } else {
+          frames.push(
+            createDataFrame({
+              name: seriesNames[idx],
+              refId: target.refId,
+              fields: [
+                { name: 'Time', values: slicedTimestamps, type: FieldType.time },
+                {
+                  name: 'Value',
+                  values: values,
+                  labels: labels,
+                },
+              ],
+            })
+          );
+        }
       }
     }
   }
@@ -352,6 +380,41 @@ export function buildDataFrames(
 function renderLegend(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (match, key) => {
     return vars[key] || match;
+  });
+}
+
+type Distribution = Distributiondouble | Distributionint64;
+
+/**
+ * Convert distributions to a heatmap-rows data frame. Each bin becomes a
+ * field, labelled by the lower edge of the bin.
+ */
+function buildDistributionFrame(
+  name: string,
+  refId: string,
+  timestamps: number[],
+  dists: Array<Distribution | null>
+): DataFrame {
+  // Oximeter histogram bin edges are defined by the metric schema, so all
+  // distributions within a timeseries share the same bins. We use the first
+  // non-null distribution to extract the bin edges for the heatmap fields.
+  const first = dists.find((d): d is Distribution => d !== null);
+  if (!first) {
+    return createDataFrame({ name, refId, fields: [{ name: 'Time', values: timestamps, type: FieldType.time }] });
+  }
+
+  const binFields = first.bins.map((edge, idx) => ({
+    name: String(edge),
+    type: FieldType.number,
+    config: {},
+    values: dists.map((dist) => (dist ? dist.counts[idx] : null)),
+  }));
+
+  return createDataFrame({
+    name,
+    refId,
+    meta: { type: DataFrameType.HeatmapRows },
+    fields: [{ name: 'Time', values: timestamps, type: FieldType.time }, ...binFields],
   });
 }
 
