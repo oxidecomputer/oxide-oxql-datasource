@@ -7,7 +7,9 @@ Query and visualize metrics from an [Oxide](https://oxide.computer) rack using [
 Install the plugin using the Grafana CLI:
 
 ```bash
-grafana cli plugins install oxide-oxql-datasource
+grafana cli \
+  --pluginUrl https://github.com/oxidecomputer/oxide-oxql-datasource/releases/download/v0.1.0/oxide-oxql-datasource-0.1.0.zip \
+  plugins install oxide-oxql-datasource
 ```
 
 Or download the latest release from the [releases page](https://github.com/oxidecomputer/oxide-oxql-datasource/releases) and extract it to your Grafana plugins directory.
